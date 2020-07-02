@@ -68,6 +68,36 @@ void strip(string& str){
     lstrip(str);
 }
 
+struct bedrec{
+    int start;
+    int end;
+    string dat;
+    bedrec(int s, int e, string d){
+        this->start = s;
+        this->end = e;
+        this->dat = d;
+    };
+};
+
+bool operator<(const bedrec& r1, const bedrec& r2){
+    if (r1.start < r2.start){
+        return true;
+    }
+    else if (r2.start < r1.start){
+        return false;
+    }
+    else{
+        if (r1.end < r2.end){
+            true;
+        }
+        else if (r2.end < r1.end){
+            return false;
+        }
+        else{
+            return r1.dat < r2.dat;
+        }
+    }
+}
 
 /**
  * Print a help message to the terminal and exit.
@@ -147,7 +177,9 @@ int main(int argc, char *argv[]) {
     string prevchrom = "";
     
     // Keep current chromosome in sorted order.
-    map<pair<int, int>, string> bed_curchrom;
+    set<bedrec> bed_curchrom;
+    
+    FILE* cur_out = NULL;
     
     // Read input file
     fstream fin;
@@ -186,38 +218,30 @@ int main(int argc, char *argv[]) {
             }
             if (chrom != prevchrom){
                 fprintf(stderr, "Processing chrom %s...\n", chrom.c_str());
-                if (prevchrom != ""){
-                    // Write tmp file.
-                    string outname = tmpdir + "/" + basename + "_" + prevchrom + ".bed";
-                    FILE* outf = fopen(outname.c_str(), "w");
-                    for (map<pair<int, int>, string>::iterator bcc = bed_curchrom.begin();
-                        bcc != bed_curchrom.end(); ++bcc){
-                        fprintf(outf, "%s\n", bcc->second.c_str());
-                    }
-                    fclose(outf);
+                if (prevchrom != "" && cur_out != NULL){
+                    fclose(cur_out);
                 }
+                
+                // Open correct tmp file
+                string outname = tmpdir + "/" + basename + "_" + chrom + ".bed";
+                cur_out = fopen(outname.c_str(), "a");
+                
                 chroms_sorted.insert(chrom);
-                bed_curchrom.clear();
                 prevchrom = chrom;
             }
-            // Insert into map.
-            bed_curchrom.insert(make_pair(make_pair(start, end), line));
+            
+            fprintf(cur_out, "%s\n", line.c_str());
         }
     }
-    // Handle last chromosome
-    if (prevchrom != "" && bed_curchrom.size() > 0){
-        // Write tmp file.
-        string outname = tmpdir + "/" + basename + "_" + prevchrom + ".bed";
-        FILE* outf = fopen(outname.c_str(), "w");
-        for (map<pair<int, int>, string>::iterator bcc = bed_curchrom.begin();
-            bcc != bed_curchrom.end(); ++bcc){
-            fprintf(outf, "%s\n", bcc->second.c_str());
-        }
-        fclose(outf);
+    
+    if (cur_out != NULL){
+        fclose(cur_out);
     }
+    
     // Now concatenate all these sorted chunks in the correct order.
     FILE* outf = fopen(outfile.c_str(), "w");
     for (set<string>::iterator chrom = chroms_sorted.begin(); chrom != chroms_sorted.end(); ++chrom){
+        bed_curchrom.clear();
         string inname = tmpdir + "/" + basename + "_" + *chrom + ".bed";
         fstream inf;
         inf.open(inname.c_str(), fstream::in);
@@ -229,8 +253,44 @@ int main(int argc, char *argv[]) {
         while (!inf.eof()){
             // Read line
             std::getline(inf, line);
-            fprintf(outf, "%s\n", line.c_str());   
+            
+            if (line != ""){
+                istringstream tabsplitter(line);
+                string fld;
+                
+                string chrom;
+                int start;
+                int end;
+            
+                int token_index = 0;
+                while(std::getline(tabsplitter, fld, '\t')){
+                    if (token_index == 0){
+                        chrom = fld;
+                    }
+                    else if (token_index == 1){
+                        start = atoi(fld.c_str());
+                    }
+                    else if (token_index == 2){
+                        end = atoi(fld.c_str());
+                    }
+                    else{
+                        break;
+                    }
+                    token_index++;
+                }
+            
+                // Insert into map for sorting
+                bed_curchrom.insert(bedrec(start, end, line));
+                //bed_curchrom.insert(make_pair(make_pair(start, end), line));  
+            }
         }
+        
+        // Write BED to output file.
+        for (set<bedrec>::iterator bcc = bed_curchrom.begin();
+            bcc != bed_curchrom.end(); ++bcc){
+            fprintf(outf, "%s\n", bcc->dat.c_str());
+        }
+        
         if (remove(inname.c_str()) != 0){
             fprintf(stderr, "ERROR deleting tmp file %s\n", inname.c_str());
         }
