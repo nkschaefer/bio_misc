@@ -11,6 +11,7 @@
 #include <regex>
 #include <map>
 #include <bitset>
+#include <cstring>
 #include <unordered_set>
 
 typedef std::bitset<MAXHAPS> cladeset;

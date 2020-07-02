@@ -9,6 +9,7 @@
 #include <sstream>
 #include <fstream>
 #include <regex>
+#include <cstring>
 #include <cmath>
 #include <bitset>
 #include <zlib.h>
