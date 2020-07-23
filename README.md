@@ -2,5 +2,5 @@
 Miscellaneous bioinformatics-related stuff
 
 ## Requirements
-* HTSLib
+* HTSLib[http://www.htslib.org/download/]
 * zlib
