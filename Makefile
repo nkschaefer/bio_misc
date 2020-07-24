@@ -23,7 +23,7 @@ bin/sort_huge_bed: src/sort_huge_bed.cpp
 	$(COMP) -std=c++11 --std=gnu++11 src/sort_huge_bed.cpp -o bin/sort_huge_bed -lz
 
 bin/bam_fq_pairs: src/bam_fq_pairs.cpp src/bam.h bam.o
-	$(COMP) -std=c++11 src/bam_fq_pairs.cpp -o bin/bam_fq_pairs bam.o -lz -lhts
+	$(COMP) -std=c++11 --std=gnu++11 src/bam_fq_pairs.cpp -o bin/bam_fq_pairs bam.o -lz -lhts
 
 bam.o: src/bam.cpp src/bam.h
 	$(COMP) -std=c++11 -c src/bam.cpp -lhts
