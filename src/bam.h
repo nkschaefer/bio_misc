@@ -11,9 +11,20 @@ class bam_reader{
         std::string bc_tag;
         int prevtid;
         bool bcs_10x; // Do we want to try to extract every 10X Genomics barcode (see below)?
+    
+        int32_t get_query_start();
+        int32_t get_query_end();
+        
     public:
         bam1_t* reader;
         std::string bc;
+        
+        long int reference_start;
+        long int reference_end;
+        long int reference_length;
+        long int query_start;
+        long int query_end;
+        long int query_length;
         
         // Define stuff to store all potential 10X barcode data
         char* bc_z;
