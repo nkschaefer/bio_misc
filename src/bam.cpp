@@ -64,6 +64,7 @@ void bam_reader::set_10x(){
 void bam_reader::unset_10x(){
     this->bcs_10x = false;
     
+    this->has_bx_z = false;
     this->has_bc_z = false;
     this->has_st_z = false;
     this->has_rx_z = false;
@@ -99,6 +100,25 @@ bool bam_reader::next(){
                 this->bc = std::string(bc_char);
             }
         }
+        // Get mapping coordinates.
+        // Adapted from pysam (pysam/libcalignedsegment.pyx)
+        this->reference_end = -1;
+        this->reference_length = -1;
+        if (! this->unmapped() && this->reader->core.n_cigar != 0){
+            this->reference_end = bam_endpos(this->reader);
+            this->reference_length = bam_endpos(this->reader) - this->reader->core.pos;
+        }
+        this->reference_start = this->reader->core.pos;
+        if (this->reader->core.n_cigar != 0){
+            this->query_start = this->get_query_start();
+            this->query_end = this->get_query_end();
+        }
+        else{
+            this->query_start = 0;
+            this->query_end = this->reader->core.l_qseq;
+        }
+        this->query_length = this->reader->core.l_qseq;
+
         if (this->bcs_10x){
             // Attempt to extract every 10X Genomics barcode tag.
             this->has_bc_z = false;
@@ -305,4 +325,64 @@ void bam_reader::write_header(BGZF* fp){
  */
 void bam_reader::write_record(BGZF* fp){
     int status = bam_write1(fp, this->reader);
+}
+
+/**
+ * Code for this adapted from pysam (pysam/libcalignedsegment.pyx)
+ */
+int32_t bam_reader::get_query_start(){
+    uint32_t* cigar_p = bam_get_cigar(this->reader);
+    uint32_t start_offset = 0;
+    for (uint32_t k = 0; k < this->reader->core.n_cigar; ++k){
+        uint32_t op = cigar_p[k]&BAM_CIGAR_MASK;
+        if (op == BAM_CHARD_CLIP){
+            if (start_offset != 0 && start_offset != reader->core.l_qseq){
+                // Invalid clipping
+                fprintf(stderr, "Invalid clipping detected\n");
+                exit(1);
+            }
+        }
+        else if (op == BAM_CSOFT_CLIP){
+            start_offset += cigar_p[k] >> BAM_CIGAR_SHIFT;
+        }
+        else{
+            break;
+        }
+    }
+    return start_offset;
+}
+
+/**
+ * Code for this adapted from pysam (pysam/libcalignedsegment.pyx)
+ */
+int32_t bam_reader::get_query_end(){
+    uint32_t* cigar_p = bam_get_cigar(this->reader);
+    uint32_t end_offset = this->reader->core.l_qseq;
+    if (end_offset == 0){
+        for (uint32_t k = 0; k < this->reader->core.n_cigar; ++k){
+            uint32_t op = cigar_p[k] & BAM_CIGAR_MASK;
+            if (op == BAM_CMATCH || op == BAM_CINS || op == BAM_CEQUAL || op == BAM_CDIFF \
+                || (op == BAM_CSOFT_CLIP && end_offset == 0)){
+                end_offset += cigar_p[k] >> BAM_CIGAR_SHIFT;
+            }
+        }
+    }
+    else{
+        for (uint32_t k = this->reader->core.n_cigar-1; k >= 1; k--){
+            uint32_t op = cigar_p[k] & BAM_CIGAR_MASK;
+            if (op == BAM_CHARD_CLIP){
+                if (end_offset != this->reader->core.l_qseq){
+                    fprintf(stderr, "Invalid clipping detected\n");
+                    exit(1);
+                }
+            }
+            else if (op == BAM_CSOFT_CLIP){
+                end_offset -= cigar_p[k] >> BAM_CIGAR_SHIFT;
+            }
+            else{
+                break;
+            }
+        }
+    }
+    return end_offset;
 }
