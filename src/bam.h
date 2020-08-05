@@ -79,6 +79,7 @@ class bam_reader{
     void get_qual(char*);
     void write_header(BGZF*);
     void write_record(BGZF*);
+    char get_base_at(long int);
     
 };
 

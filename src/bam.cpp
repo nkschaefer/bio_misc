@@ -386,3 +386,74 @@ int32_t bam_reader::get_query_end(){
     }
     return end_offset;
 }
+
+/**
+ * Retrieve the base in the read matching the given reference position.
+ * Takes the position (1-based) as an argument.
+ */
+char bam_reader::get_base_at(long int pos){
+    long int read_pos = 0;
+    long int next_read_pos = 0;
+    long int next_map_pos = 0;
+    long int map_pos = this->reference_start + 1;
+    if (pos != map_pos){
+        // Go through cigar options until we hit the right site.
+        uint32_t* cigar_p = bam_get_cigar(this->reader);
+        for (uint32_t k = 0; k < this->reader->core.n_cigar; ++k){
+            uint32_t op = bam_cigar_op(cigar_p[k]);
+            uint32_t ol = bam_cigar_oplen(cigar_p[k]);
+            if (op == BAM_CMATCH || op == BAM_CINS || op == BAM_CEQUAL || op == BAM_CSOFT_CLIP ||
+                op == BAM_CDIFF){
+                next_read_pos = read_pos + ol;
+            }
+            else{
+                next_read_pos = read_pos;
+            }
+            if (op == BAM_CMATCH || op == BAM_CDEL || op == BAM_CREF_SKIP || op == BAM_CEQUAL ||
+                op == BAM_CDIFF){
+                next_map_pos = map_pos + ol;
+            }
+            else{
+                next_map_pos = map_pos;
+            }
+            
+            if (pos >= map_pos && pos <= next_map_pos){
+                long int increment = pos - map_pos;
+                map_pos += increment;
+                if (next_read_pos != read_pos){
+                    read_pos += increment;
+                }
+                break;
+            }
+            else{
+                map_pos = next_map_pos;
+                read_pos = next_read_pos;
+            }
+        }
+    }
+    if (map_pos == pos){
+        // Retrieve it.
+        uint8_t* seq_bin = bam_get_seq(this->reader);
+        uint8_t base = bam_seqi(seq_bin, read_pos);
+        if (base == BASE_A){
+            return 'A';
+        }
+        else if (base == BASE_C){
+            return 'C';
+        }
+        else if (base == BASE_G){
+            return 'G';
+        }
+        else if (base == BASE_T){
+            return 'T';
+        }
+        else if (base == BASE_N){
+            return 'N';
+        }
+        else{
+            return 'N';
+        }
+    }
+    // Not found -- must be in a gap
+    return '-';
+}

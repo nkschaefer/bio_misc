@@ -1,7 +1,7 @@
 SHELL=/bin/bash
 COMP=g++
 
-all: bin/bcf2eigenstrat bin/bcf2treemix bin/eig_upgma bin/eig_dstat bin/filter_pairs bin/sort_huge_bed bin/bam_fq_pairs
+all: bin/bcf2eigenstrat bin/bcf2treemix bin/eig_upgma bin/eig_dstat bin/filter_pairs bin/sort_huge_bed bin/bam_fq_pairs bin/bam_split_snps
 MAXHAPS ?= 500
 
 bin/bcf2eigenstrat: src/bcf2eigenstrat.cpp
@@ -24,6 +24,9 @@ bin/sort_huge_bed: src/sort_huge_bed.cpp
 
 bin/bam_fq_pairs: src/bam_fq_pairs.cpp src/bam.h bam.o
 	$(COMP) -std=c++11 --std=gnu++11 src/bam_fq_pairs.cpp -o bin/bam_fq_pairs bam.o -lz -lhts
+
+bin/bam_split_snps: src/bam_split_snps.cpp src/bam.h bam.o
+	$(COMP) -std=c++11 --std=gnu++11 src/bam_split_snps.cpp -o bin/bam_split_snps bam.o -lz -lhts
 
 bam.o: src/bam.cpp src/bam.h
 	$(COMP) -std=c++11 -c src/bam.cpp -lhts
