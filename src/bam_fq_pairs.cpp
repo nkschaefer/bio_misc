@@ -33,13 +33,15 @@ using namespace std;
 void help(int code){
     fprintf(stderr, "bam_fq_pairs [OPTIONS]\n");
     fprintf(stderr, "Replacement for samtools fastq. Expects BAM input sorted by read name. \
-Pairs reads (and outputs unpaired reads separately). Also preserves barcodes by placing them \
-back into read IDs in the same format as the 10X Genomics pipeline.\n");
+Pairs reads (and outputs unpaired reads separately). Also dumps all tags from each BAM entry \
+into the FASTQ comment field. These can then be re-inserted into a BAM using bwa mem -C.\n");
     fprintf(stderr, "[OPTIONS]:\n");
     fprintf(stderr, "    --bam -b The BAM file of interest\n");
     fprintf(stderr, "    --r1 -1 The output file for forward, paired reads\n");
     fprintf(stderr, "    --r2 -2 The output file for reverse, paired reads\n");
     fprintf(stderr, "    --single -s The output file for unpaired reads\n");
+    fprintf(stderr, "    --scRNA -r Specify if the BAM file is 10x scRNA-seq data. In that case, \
+this program will create forward reads consisting of cell barcode sequences.\n");
     fprintf(stderr, "    --help -h Display this message and exit.\n");
     exit(code);
 }
@@ -47,7 +49,7 @@ back into read IDs in the same format as the 10X Genomics pipeline.\n");
 /**
  * Print FASTQ data to the output file.
  */
-void write_fq(gzFile& out, char* id, char* comment, char* seq, char* qual){
+void write_fq(gzFile& out, const char* id, const char* comment, const char* seq, const char* qual){
     gzwrite(out, "@", 1);
     gzwrite(out, id, strlen(id));
     gzwrite(out, " ", 1);
@@ -59,6 +61,7 @@ void write_fq(gzFile& out, char* id, char* comment, char* seq, char* qual){
     gzwrite(out, "\n", 1);
 }
 
+/*
 // Store all 10X barcodes.
 struct bcs_10x{
     char bc[MAX_BC_LEN];
@@ -113,13 +116,13 @@ struct bcs_10x{
         }
     };
 };
+*/
 
-void parse_cur_read(bam_reader& reader, bcs_10x& bcs, char* id, char* comment, 
+void parse_cur_read(bam_reader& reader, char* id, char* comment, 
     char* seq, char* qual, char* rtype){
     
     char* cur_id = reader.read_id();
     sprintf(id, "%s", cur_id);
-    bcs.populate(reader);
     reader.get_seq(seq);
     reader.get_qual(qual);
     if (reader.read1()){
@@ -128,13 +131,48 @@ void parse_cur_read(bam_reader& reader, bcs_10x& bcs, char* id, char* comment,
     else{
         rtype[0] = '2';
     }
+    
+    int comment_pos = 0;
+    static vector<string> tags = {"CR", "CY", "CB", "RG", "BX"};
+    for (int i = 0; i < tags.size(); ++i){
+        uint8_t* aux_bin = bam_aux_get(reader.reader, tags[i].c_str());
+        if (aux_bin != NULL){
+            char* val = bam_aux2Z(aux_bin);
+            if (comment_pos > 0){
+                sprintf(comment + comment_pos, "\t%s:Z:%s", tags[i].c_str(), val);
+                comment_pos++;
+            }
+            else{
+                sprintf(comment + comment_pos, "%s:Z:%s", tags[i].c_str(), val);
+            }
+            comment_pos += 5 + strlen(val);
+        } 
+    }
+    /*
+    // Load aux data
+    uint8_t* auxdat = bam_get_aux(reader.reader);
+    vector<string> auxtags;
+    char tagname[2];
+    
+    while (true){
+        tagname[0] = auxdat[0];
+        tagname[1] = auxdat[1];
+        switch(auxdat[3]){
+            case 
+        }
+        auxdat += 3;
+        // Read data
+
+    } 
+    fprintf(stderr, "%c%c%c%c%c\n", auxdat[0], auxdat[1], auxdat[2], auxdat[3], auxdat[4]);
+    */
     /*
     sprintf(comment, "%s:N:0:BC:Z:%s:ST:Z:%s_RX:Z:%s_QX:Z:%s_TR:Z:%s_TQ:Z:%s", \
         rtype, &bcs.bc[0], &bcs.st[0], &bcs.rx[0], &bcs.qx[0], &bcs.tr[0], &bcs.tq[0]);
     */
     // Per https://support.10xgenomics.com/genome-exome/software/pipelines/latest/advanced/other-pipelines:
     // barcodes embedded as a coment of the form: BX:Z:ACTCGACTGACTAGCT-1
-    sprintf(comment, "BX:Z:%s", &bcs.bx[0]);
+    //sprintf(comment, "BX:Z:%s", &bcs.bx[0]);
 }
 
 int main(int argc, char *argv[]) {    
@@ -153,6 +191,7 @@ int main(int argc, char *argv[]) {
        {"r1", required_argument, 0, '1'},
        {"r2", required_argument, 0, '2'},
        {"single", required_argument, 0, 's'},
+       {"scRNA", no_argument, 0, 'r'},
        {0, 0, 0, 0} 
     };
     
@@ -165,14 +204,15 @@ int main(int argc, char *argv[]) {
     bool has_paired = false;
     string sfile;
     bool has_single = false;
-    
+    bool scRNA = false;
+
     int option_index = 0;
     int ch;
     
     if (argc == 1){
         help(0);
     }
-    while((ch = getopt_long(argc, argv, "b:1:2:s:h", long_options, &option_index )) != -1){
+    while((ch = getopt_long(argc, argv, "b:1:2:s:rh", long_options, &option_index )) != -1){
         switch(ch){
             case 0:
                 // This option set a flag. No need to do anything here.
@@ -194,6 +234,9 @@ int main(int argc, char *argv[]) {
             case 's':
                 sfile = optarg;
                 has_single = true;
+                break;
+            case 'r':
+                scRNA = true;
                 break;
             default:
                 help(0);
@@ -247,14 +290,25 @@ int main(int argc, char *argv[]) {
     // Init BAM reader
     bam_reader reader(bamfile);
     reader.set_10x();
-    
+    if (scRNA){
+        string bcstr = "CB";
+        reader.set_bc_tag(bcstr);
+    }
+
     char id[MAX_ID_LEN];
-    char comment[MAX_SEQ_LEN];
+    char comment[5000];
     char seq[MAX_SEQ_LEN];
     char qual[MAX_SEQ_LEN];
     
-    bcs_10x bcs;
-            
+    // If we need to write out cell barcodes as reads, fill in a fake
+    // quality string the same length as barcode sequences
+    char bc_qual[17];
+    for (int i = 0; i < 16; ++i){
+        bc_qual[i] = '?';
+    } 
+    bc_qual[16] = '\0';
+    char bcbuf[100];
+
     bool has_prev = false;
     // Need to track this for 10X barcode formatting in FASTQ
     char rtype[2];
@@ -265,7 +319,7 @@ int main(int argc, char *argv[]) {
         // If not tracking read pairs, just print everything right away.
         if (!has_paired){
             // Parse current sequence.
-            parse_cur_read(reader, bcs, &id[0], &comment[0], &seq[0], &qual[0], &rtype[0]);
+            parse_cur_read(reader, &id[0], &comment[0], &seq[0], &qual[0], &rtype[0]);
             write_fq(s, &id[0], &comment[0], &seq[0], &qual[0]);
         }
         else{
@@ -277,7 +331,7 @@ int main(int argc, char *argv[]) {
                     }
                 }
                 // Parse current sequence.
-                parse_cur_read(reader, bcs, &id[0], &comment[0], &seq[0], &qual[0], &rtype[0]);
+                parse_cur_read(reader, &id[0], &comment[0], &seq[0], &qual[0], &rtype[0]);
                 has_prev = true;
             }
             else if (reader.paired() && reader.read2()){
@@ -289,7 +343,7 @@ int main(int argc, char *argv[]) {
                     had_r1 = true;
                 }
                 // Parse current sequence
-                parse_cur_read(reader, bcs, &id[0], &comment[0], &seq[0], &qual[0], &rtype[0]);
+                parse_cur_read(reader, &id[0], &comment[0], &seq[0], &qual[0], &rtype[0]);
                 if (had_r1){
                     write_fq(r2, &id[0], &comment[0], &seq[0], &qual[0]);
                 }
@@ -300,8 +354,28 @@ int main(int argc, char *argv[]) {
             }
             else{
                 // Unpaired read. Just print it right away.
-                parse_cur_read(reader, bcs, &id[0], &comment[0], &seq[0], &qual[0], &rtype[0]);
-                write_fq(s, &id[0], &comment[0], &seq[0], &qual[0]);
+                parse_cur_read(reader, &id[0], &comment[0], &seq[0], &qual[0], &rtype[0]);
+                if (scRNA && reader.bc.length() > 0){
+                    bool terminated = false;
+                    for (int i = 0; i < reader.bc.length(); ++i){
+                        if (reader.bc[i] == 'A' || reader.bc[i] == 'C' || reader.bc[i] == 'G' || reader.bc[i] == 'T'){
+                            bcbuf[i] = reader.bc[i];
+                        }
+                        else{
+                            bcbuf[i] = '\0';
+                            terminated = true;
+                            break;
+                        }
+                    }    
+                    if (!terminated){
+                        bcbuf[reader.bc.length()] = '\0';
+                    }               
+                    write_fq(r1, &id[0], &comment[0], &bcbuf[0], &bc_qual[0]);
+                    write_fq(r2, &id[0], &comment[0], &seq[0], &qual[0]); 
+                }
+                else{
+                    write_fq(s, &id[0], &comment[0], &seq[0], &qual[0]);
+                }
                 has_prev = false;
             }
         }

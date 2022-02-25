@@ -30,6 +30,8 @@ bam_reader::bam_reader(string& bamfile){
     this->header = sam_hdr_read(fp);
     this->reader = bam_init1();
     this->has_bc_tag = false;
+    this->cb = false;
+    this->bcs_10x = false;
     this->prevtid = -1;
 }
 
@@ -52,6 +54,13 @@ void bam_reader::set_bc_tag(string& bctag){
 }
 
 /**
+ *  This is a data set of single-cell data, and cells are identified via the CB tag.
+ */
+void bam_reader::set_cb(){
+    this->cb = true;
+}
+
+/**
  * Alternatively, set this to try to extract every 10X Genomics barcode in every read.
  */
 void bam_reader::set_10x(){
@@ -71,6 +80,7 @@ void bam_reader::unset_10x(){
     this->has_qx_z = false;
     this->has_tr_z = false;
     this->has_tq_z = false;
+    this->has_cb_z = false;
 }
 
 /**
@@ -118,8 +128,16 @@ bool bam_reader::next(){
             this->query_end = this->reader->core.l_qseq;
         }
         this->query_length = this->reader->core.l_qseq;
-
-        if (this->bcs_10x){
+        
+        if (this->cb){
+            this->has_cb_z = false;
+            uint8_t* bc_bin = bam_aux_get(this->reader, "CB");
+            if (bc_bin != NULL){
+                this->has_cb_z = true;
+                this->cb_z = bam_aux2Z(bc_bin);       
+            }
+        }
+        else if (this->bcs_10x){
             // Attempt to extract every 10X Genomics barcode tag.
             this->has_bc_z = false;
             this->has_bx_z = false;
@@ -128,6 +146,7 @@ bool bam_reader::next(){
             this->has_qx_z = false;
             this->has_tr_z = false;
             this->has_tq_z = false;
+            this->has_cb_z = false;
             uint8_t* bc_bin = bam_aux_get(this->reader, "BC");
             if (bc_bin != NULL){
                 this->has_bc_z = true;
@@ -162,6 +181,11 @@ bool bam_reader::next(){
             if (bc_bin != NULL){
                 this->has_tq_z = true;
                 this->tq_z = bam_aux2Z(bc_bin);
+            }
+            bc_bin = bam_aux_get(this->reader, "CB");
+            if (bc_bin != NULL){
+                this->has_cb_z = true;
+                this->cb_z = bam_aux2Z(bc_bin);
             }
         }
         return true;
@@ -215,6 +239,10 @@ bool bam_reader::supplementary(){
  *  @return a C++ string representation of the reference genome sequence (chromosome) ID
  */
 char* bam_reader::ref_id(){
+    if (this->reader->core.tid == -1){
+        fprintf(stderr, "WARNING: in bam_reader::ref_id(): read unmapped; no ref ID\n");
+        return NULL;
+    }
     return this->header->target_name[this->reader->core.tid];
 }
 

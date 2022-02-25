@@ -11,7 +11,7 @@ class bam_reader{
         std::string bc_tag;
         int prevtid;
         bool bcs_10x; // Do we want to try to extract every 10X Genomics barcode (see below)?
-    
+        bool cb; // Should we look for cell barcode tags for every entry?
         int32_t get_query_start();
         int32_t get_query_end();
         
@@ -34,7 +34,8 @@ class bam_reader{
         char* qx_z;
         char* tr_z;
         char* tq_z;
-        
+        char* cb_z;
+
         bool has_bc_z;
         bool has_bx_z;
         bool has_st_z;
@@ -42,7 +43,8 @@ class bam_reader{
         bool has_qx_z;
         bool has_tr_z;
         bool has_tq_z;
-        
+        bool has_cb_z;
+
         long int isize;
         bool has_bc_tag;
         
@@ -51,6 +53,7 @@ class bam_reader{
     ~bam_reader();
     
     void set_bc_tag(std::string&);
+    void set_cb();
     void set_10x();
     void unset_10x();
     
