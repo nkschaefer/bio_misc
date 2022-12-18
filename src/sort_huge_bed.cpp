@@ -88,7 +88,7 @@ bool operator<(const bedrec& r1, const bedrec& r2){
     }
     else{
         if (r1.end < r2.end){
-            true;
+            return true;
         }
         else if (r2.end < r1.end){
             return false;

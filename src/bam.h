@@ -52,6 +52,13 @@ class bam_reader{
     bam_reader(std::string&);
     ~bam_reader();
     
+    void add_read_group_hdr(const std::string& id, 
+        const std::string& sm, 
+        const std::string& lib, 
+        const std::string& pu, 
+        const std::string& pl);
+    void add_read_group_read(const std::string&);
+ 
     void set_bc_tag(std::string&);
     void set_cb();
     void set_10x();

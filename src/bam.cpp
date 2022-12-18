@@ -43,6 +43,71 @@ bam_reader::~bam_reader(){
     sam_close(this->fp);
 }
 
+void bam_reader::add_read_group_hdr(const string& id, 
+    const string& sm, 
+    const string& lib, 
+    const string& pu, 
+    const string& pl){
+    
+    // Eliminate this ID if it already exists.
+    kstring_t hdr_line = {0, 0, NULL};
+    if (sam_hdr_find_line_id(this->header, "RG", "ID", id.c_str(), &hdr_line) == 0) {
+        int ret = sam_hdr_remove_line_id(this->header, "RG", "ID", id.c_str());
+        if (ret == -1){
+            fprintf(stderr, "ERROR removing existing RG ID %s from header\n", id.c_str());
+            exit(1);
+        }
+    }
+    ks_free(&hdr_line);
+    
+    // Add this ID to the header
+    string rg_line_str = "@RG\tID:" + id + "\tSM:" + sm + "\tLB:" + lib + "\tPU:" + pu + 
+        "\tPL:" + pl;
+    //kstring_t rg_line = {0, 0, NULL};
+    //kputs(rg_line_str.c_str(), &rg_line);
+    
+    int ret = sam_hdr_add_lines(this->header, rg_line_str.c_str(), rg_line_str.length());
+    if (ret == -1){
+        fprintf(stderr, "ERROR adding rg line to header\n");
+        exit(1);
+    }
+    //ks_free(&rg_line);
+    
+}
+
+void bam_reader::add_read_group_read(const string& id){
+    
+    /*
+    int ret = bam_aux_update_str(this->reader, "RG", id.length(), id.c_str());
+    if (ret == -1){
+        fprintf(stderr, "ERROR updating read group tag\n");
+        exit(1);
+    }
+    */
+    const static char rgtag[2] = {'R', 'G'};
+    
+    uint8_t* rg_bin = bam_aux_get(this->reader, rgtag);
+    if (rg_bin != NULL){
+        // Delete current read group
+        int ret = bam_aux_del(this->reader, rg_bin);
+        if (ret == -1){
+            fprintf(stderr, "ERROR deleting existing read group tag\n");
+            exit(1);
+        }
+    }
+    uint8_t buf[id.length()+1];
+    memcpy(&buf[0], id.c_str(), id.length());
+    buf[id.length()] = '\0';
+    int ret = bam_aux_append(this->reader, rgtag, 'Z', id.length()+1, (uint8_t*)id.c_str());
+  
+    if (ret == -1){
+        fprintf(stderr, "ERROR appending RG tag\n");
+        exit(1);
+    }
+    
+}
+
+
 /** 
  * Sets a barcode tag to look at.
  *  @param bctag

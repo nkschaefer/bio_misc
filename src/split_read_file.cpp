@@ -58,7 +58,7 @@ void write_fastq(kseq_t* seq, gzFile& out){
     char buf2[seq->seq.l + 1];
     sprintf(buf2, "%s\n", seq->seq.s);
     gzwrite(out, buf2, seq->seq.l + 1);
-    char buf3[2];
+    char buf3[3];
     sprintf(buf3, "+\n");
     gzwrite(out, buf3, 2);
     sprintf(buf2, "%s\n", seq->qual.s);
