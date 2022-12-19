@@ -52,6 +52,7 @@ class bam_reader{
     bam_reader(std::string&);
     ~bam_reader();
     
+    void clear_read_groups_hdr();    
     void add_read_group_hdr(const std::string& id, 
         const std::string& sm, 
         const std::string& lib, 

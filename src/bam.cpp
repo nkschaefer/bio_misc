@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <htslib/sam.h>
+#include <htslib/kstring.h>
 #include <htslib/bgzf.h>
 #include "bam.h"
 
@@ -41,6 +42,15 @@ bam_reader::bam_reader(string& bamfile){
 bam_reader::~bam_reader(){
     bam_destroy1(this->reader);
     sam_close(this->fp);
+}
+
+/**
+ * Eliminate all existing read groups in the header of the BAM file
+ */
+void bam_reader::clear_read_groups_hdr(){
+    sam_hdr_remove_except(this->header, "RG", NULL, NULL);
+    //int nrg = sam_hdr_count_lines(this->header, "RG");
+    //sam_hdr_remove_line_id(this->header, "RG", "ID", value);
 }
 
 void bam_reader::add_read_group_hdr(const string& id, 
