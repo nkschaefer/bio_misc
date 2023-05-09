@@ -59,7 +59,9 @@ class bam_reader{
         const std::string& pu, 
         const std::string& pl);
     void add_read_group_read(const std::string&);
- 
+    
+    void add_string_tag(const std::string&, const std::string&);
+
     void set_bc_tag(std::string&);
     void set_cb();
     void set_10x();

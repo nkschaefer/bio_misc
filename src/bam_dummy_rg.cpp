@@ -128,6 +128,9 @@ int main(int argc, char *argv[]) {
     // Init BAM reader
     bam_reader reader(bamfile);
     
+    // Eliminate read groups from header
+    reader.clear_read_groups_hdr();
+
     // Add read group to header
     reader.add_read_group_hdr(lib, sample, lib, "NA", "Illumina");
     

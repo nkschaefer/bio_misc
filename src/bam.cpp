@@ -117,6 +117,21 @@ void bam_reader::add_read_group_read(const string& id){
     
 }
 
+/**
+ *  Adds a text tag to a BAM record. If it already exists, overwrites it.
+ */
+void bam_reader::add_string_tag(const string& tagname, const string& tagtext){
+    if (tagname.length() != 2){
+        fprintf(stderr, "ERROR: add_tag() called with tag name length != 2: %s\n", tagname.c_str());
+        exit(1);
+    }
+    int success = bam_aux_append(this->reader, tagname.c_str(), 'Z', tagtext.length()+1,
+        (uint8_t*)tagtext.c_str());
+    if (success == -1){
+        fprintf(stderr, "ERROR appending %s tag %s\n", tagname.c_str(), tagtext.c_str());
+        exit(1);
+    }
+}
 
 /** 
  * Sets a barcode tag to look at.
