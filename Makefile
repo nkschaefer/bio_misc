@@ -9,8 +9,11 @@ ifeq ($(UNAME_S),Darwin)
 	LDFLAGS += -L$(CELLAR)/lib/ -largp
 endif
 
-all: bin/bcf2eigenstrat bin/bcf2treemix bin/bam_dummy_rg bin/eig_upgma bin/eig_dstat bin/filter_pairs bin/sort_huge_bed bin/bam_fq_pairs bin/split_read_file
+all: bin/bcf2eigenstrat bin/bcf2treemix bin/bam_dummy_rg bin/bam_add_tag bin/eig_upgma bin/eig_dstat bin/filter_pairs bin/sort_huge_bed bin/bam_fq_pairs bin/split_read_file bin/vcf_depth_filter
 MAXHAPS ?= 500
+
+bin/vcf_depth_filter: src/vcf_depth_hist.cpp
+	$(COMP) $(FLAGS) src/vcf_depth_filter.cpp -o bin/vcf_depth_filter $(LDFLAGS)
 
 bin/bcf2eigenstrat: src/bcf2eigenstrat.cpp
 	$(COMP) $(FLAGS)  src/bcf2eigenstrat.cpp -o bin/bcf2eigenstrat $(LDFLAGS)
@@ -20,6 +23,9 @@ bin/bcf2treemix: src/bcf2treemix.cpp
 
 bin/bam_dummy_rg: src/bam_dummy_rg.cpp src/bam.h bam.o
 	$(COMP) $(FLAGS) src/bam_dummy_rg.cpp -o bin/bam_dummy_rg bam.o $(LDFLAGS)
+
+bin/bam_add_tag: src/bam_add_tag.cpp src/bam.h bam.o
+	$(COMP) $(FLAGS) src/bam_add_tag.cpp -o bin/bam_add_tag bam.o $(LDFLAGS)
 
 bin/eig_upgma: src/eig_upgma.cpp treeNode.o
 	$(COMP) -D MAXHAPS=$(MAXHAPS) $(FLAGS)  src/eig_upgma.cpp -o bin/eig_upgma treeNode.o $(LDFLAGS)
