@@ -224,7 +224,10 @@ void filter_vcf(string& filename, string& outfile, map<int, int>& sample_mindp,
     vector<string>& pops,
     float hardy_thresh,
     int num_samples,
-    float frac_missing){
+    float frac_missing,
+    int min_vq,
+    int min_gq,
+    string& output_format){
     
     map<int, int> samp2pop;
     for (map<int, set<int> >::iterator pi = pop2idx.begin(); pi != pop2idx.end(); ++pi){
@@ -244,7 +247,14 @@ void filter_vcf(string& filename, string& outfile, map<int, int>& sample_mindp,
     // w = write VCF
     // wz = write gzVCF
     // wb = write BCF
-    htsFile* hts_out = bcf_open(outfile.c_str(), "wz");
+    string fmtstr = "wz";
+    if (output_format == "v"){
+        fmtstr = "w";
+    }
+    else if (output_format == "b"){
+        fmtstr = "wb";
+    }
+    htsFile* hts_out = bcf_open(outfile.c_str(), fmtstr.c_str());
     
     // Write header to output
     //bcf_hdr_t* out_header = bcf_hdr_init("w");
@@ -266,11 +276,18 @@ void filter_vcf(string& filename, string& outfile, map<int, int>& sample_mindp,
     int n_hardy_fail = 0;
     int n_depth_fail = 0;
     int n_miss_fail = 0;
+    int n_qual_fail = 0;
+    int n_gq_fail = 0;
+    int n_multi_fail = 0;
+    int n_indel_fail = 0;
+    
+    int nvar_pass = 0;
 
     while(bcf_read(bcf_reader, bcf_header, bcf_record) == 0){
         //string chrom = bcf_hdr_id2name(bcf_header, bcf_record->rid);
         bcf_unpack(bcf_record, BCF_UN_ALL);
-           
+        
+        ++nvar;   
         bool pass = true;
         for (int i = 0; i < bcf_record->n_allele; ++i){
             if (strcmp(bcf_record->d.allele[i], "A") != 0 &&
@@ -278,13 +295,22 @@ void filter_vcf(string& filename, string& outfile, map<int, int>& sample_mindp,
                 strcmp(bcf_record->d.allele[i], "G") != 0 && 
                 strcmp(bcf_record->d.allele[i], "T") != 0){
                 pass = false;
+                n_indel_fail++;
                 break;
             }
+        }
+        if (bcf_record->n_allele != 2){
+            pass = false;
+            n_multi_fail++;
         }
         if (bcf_record->d.allele[0][0] == bcf_record->d.allele[1][0]){
             pass = false;
         }
-        
+        if (min_vq > 0 && bcf_record->qual < min_vq){
+            pass = false;
+            n_qual_fail++;
+        }
+
         if (pass){
             
             vector<int> pop_hom0;
@@ -324,7 +350,9 @@ void filter_vcf(string& filename, string& outfile, map<int, int>& sample_mindp,
             int n_gt_pass = 0;
             bool hardy_fail = false;
             bool gts_altered = false;
-            
+            bool gts_alt_depth = false;
+            bool gts_alt_qual = false;
+
             for (int i = 0; i < num_samples; ++i){
                 if (bcf_gt_is_missing(gts[i*ploidy]) || 
                     num_dp_loaded < num_samples || isnan(dps[i]) || dps[i] == bcf_int32_missing){
@@ -337,12 +365,14 @@ void filter_vcf(string& filename, string& outfile, map<int, int>& sample_mindp,
                         gts[i*ploidy] = bcf_gt_missing;       
                         gts[i*ploidy+1] = bcf_gt_missing;
                         gts_altered = true;
+                        gts_alt_depth = true;
                     }
                     else if (sample_maxdp.count(i) > 0 && sample_maxdp[i] < dp){
                         // Set to missing.
                         gts[i*ploidy] = bcf_gt_missing;   
                         gts[i*ploidy+1] = bcf_gt_missing;
                         gts_altered = true;
+                        gts_alt_depth = true;
                     }
                     else{
                         ++n_gt_pass;
@@ -353,7 +383,15 @@ void filter_vcf(string& filename, string& outfile, map<int, int>& sample_mindp,
                 }     
                 else{
                     int32_t gq = gqs[i];
+                    if (min_gq > 0 && gq < min_gq){
+                        // Set to missing.
+                        gts[i*ploidy] = bcf_gt_missing;
+                        gts[i*ploidy+1] = bcf_gt_missing;
+                        gts_altered = true;
+                        gts_alt_qual = true;
+                    }
                 }
+                
                 int32_t* gtptr = gts + i*ploidy;
                 if (bcf_gt_is_missing(gtptr[0])){
                     // pass
@@ -395,10 +433,16 @@ void filter_vcf(string& filename, string& outfile, map<int, int>& sample_mindp,
             if (((frac_missing == 0 && n_gt_pass == num_samples) || 
                 (float)n_gt_pass / (float)num_samples < frac_missing) && !hardy_fail){
                 if (gts_altered){
-                    n_depth_fail++;
+                    if (gts_alt_depth){
+                        n_depth_fail++;
+                    }
+                    if (gts_alt_qual){
+                        n_gq_fail++;
+                    }
                     bcf_update_genotypes(out_header, bcf_record, gts, n_gts); 
                 }
                 int success = bcf_write(hts_out, out_header, bcf_record);
+                ++nvar_pass;
             }
             else if (!hardy_fail){
                 // missing fraction failure
@@ -408,17 +452,21 @@ void filter_vcf(string& filename, string& outfile, map<int, int>& sample_mindp,
             //free(dps);
             //free(gts);
         }
-        ++nvar;
         if (nvar % 1000 == 0){
             fprintf(stderr, "Processed %d variants\r", nvar);
         }
     }
     fprintf(stderr, "\n");
+    fprintf(stderr, "%d of %d variants removed - not biallelic\n", n_multi_fail, nvar);
+    fprintf(stderr, "%d of %d variants removed - indels\n", n_indel_fail, nvar);
+    fprintf(stderr, "%d of %d variants removed for failing variant quality filter\n",
+        n_qual_fail, nvar);
     fprintf(stderr, "%d of %d variants removed for failing HWE test\n", n_hardy_fail, nvar);
     fprintf(stderr, "%d of %d variants removed due to fraction of missing genotypes\n", n_miss_fail, nvar);
     fprintf(stderr, "%d of %d kept sites had genotypes removed for failing depth filters\n", n_depth_fail, 
-        nvar-n_miss_fail-n_hardy_fail);
-
+        nvar_pass);
+    fprintf(stderr, "%d of %d kept sites had genotypes removed for failing genotype quality filter\n", 
+        n_gq_fail, nvar_pass);
     free(gqs);
     free(dps);
     free(gts);
@@ -469,8 +517,14 @@ void help(int code){
     fprintf(stderr, "--sample -s To downsample VCF, give a float between 0 and 1 that == probability of keeping \
 a record\n");
     fprintf(stderr, "--out -o To filter input VCF, give name of output VCF to create.\n");
-    fprintf(stderr, "--percentile -p Cut genotypes with depths lower than this percentile of per-sample distribution, \
-or higher than 1-percentile.\n");
+    fprintf(stderr, "--output_format -O Format to write output (v = VCF, z = gzVCF, b = BCF). Default = z\n");
+    fprintf(stderr, "--depth_low -d Cut genotypes with depths lower than this percentile of per-sample distribution.\n");
+    fprintf(stderr, "--depth_high -D Cut genotypes with depths higher than this percentile of per-sample distribution. \
+This should be stricter due to long right tails of coverage. i.e. -d 0.001 -D 0.95 might be reasonable.\n"); 
+    fprintf(stderr, "--depth_floor -f Minimum allowable depth across all samples (default = 4)\n");
+    fprintf(stderr, "--depth_ceil -c Maximum allowable depth across all samples (default = -1 / NA)\n");
+    fprintf(stderr, "--varqual -q Minimum quality of variant to pass filter (default = 50)\n");
+    fprintf(stderr, "--gq -Q Minimum quality of genotype to pass filter (default = -1 / NA)\n");
     fprintf(stderr, "--pops -P Provide to calculate within-population Hardy-Weinberg statistics.\n");
     fprintf(stderr, "--hardy -H Cutoff for Hardy-Weinberg p-value to keep a site.\n");
     fprintf(stderr, "--missing -m Remove sites with up to this fraction missing genotypes, after filtering. \
@@ -483,10 +537,14 @@ int main(int argc, char* argv[]){
        {"vcf", required_argument, 0, 'v'},
        {"sample", required_argument, 0, 's'},
        {"out", required_argument, 0, 'o'},
-       {"percentile", required_argument, 0, 'p'},
+       {"depth_low", required_argument, 0, 'd'},
+       {"depth_high", required_argument, 0, 'D'},
+       {"depth_floor", required_argument, 0, 'f'},
+       {"depth_ceil", required_argument, 0, 'c'},
        {"pops", required_argument, 0, 'P'},
        {"hardy", required_argument, 0, 'H'},
        {"missing", required_argument, 0, 'm'},
+       {"output_format", required_argument, 0, 'O'},
        {"help", optional_argument, 0, 'h'},
        {0, 0, 0, 0} 
     };
@@ -497,10 +555,16 @@ int main(int argc, char* argv[]){
     string vcf = "";
     float sample = -1;
     string out;
-    float percentile = -1;
+    float depth_low = 0.005;
+    float depth_high = 0.99;
+    int depth_floor = 4;
+    int depth_ceil = -1;
+    int min_vq = 50;
+    int min_gq = -1;
     string popsfile = "";
     float hardy_perc = -1;
     float missing = 1.0;
+    string output_format = "z";
 
     int option_index = 0;
     int ch;
@@ -508,7 +572,7 @@ int main(int argc, char* argv[]){
     if (argc == 1){
         help(0);
     }
-    while((ch = getopt_long(argc, argv, "v:s:o:p:P:H:m:h", long_options, &option_index )) != -1){
+    while((ch = getopt_long(argc, argv, "v:s:o:O:p:d:D:f:c:q:Q:H:m:P:h", long_options, &option_index )) != -1){
         switch(ch){
             case 0:
                 // This option set a flag. No need to do anything here.
@@ -522,8 +586,26 @@ int main(int argc, char* argv[]){
             case 'o':
                 out = optarg;
                 break;
-            case 'p':
-                percentile = atof(optarg);
+            case 'O':
+                output_format = optarg;
+                break;
+            case 'd':
+                depth_low = atof(optarg);
+                break;
+            case 'D':
+                depth_high = atof(optarg);
+                break;
+            case 'f':
+                depth_floor = atoi(optarg);
+                break;
+            case 'c':
+                depth_ceil = atoi(optarg);
+                break;
+            case 'q':
+                min_vq = atoi(optarg);
+                break;
+            case 'Q':
+                min_gq = atoi(optarg);
                 break;
             case 'P':
                 popsfile = optarg;
@@ -546,12 +628,16 @@ int main(int argc, char* argv[]){
         fprintf(stderr, "ERROR: vcf required\n");
         exit(1);
     }
-    if (hardy_perc > 1.0 || percentile > 1.0 || sample > 1.0){
-        fprintf(stderr, "--hardy, --percentile, and --sample all must be a float between 0 and 1. If \
+    if (output_format != "v" && output_format != "z" && output_format != "b"){
+        fprintf(stderr, "ERROR: unrecognized output format. Valid options are v, z, or b.\n");
+        exit(1);
+    }
+    if (hardy_perc > 1.0 || depth_low > 1.0 || depth_high > 1.0 || sample > 1.0){
+        fprintf(stderr, "--hardy, --depth_low, --depth_high, and --sample all must be a float between 0 and 1. If \
 a negative value is passed, it disables the option.\n");
         exit(1);
     } 
-    if (out != "" && (percentile <= 0 && hardy_perc <= 0)){
+    if (out != "" && (depth_low <= 0 && depth_high <= 0 && hardy_perc <= 0)){
         fprintf(stderr, "ERROR: output file name given but no filtering criteria were passed\n");
         exit(1);
     } 
@@ -562,6 +648,15 @@ a negative value is passed, it disables the option.\n");
     if (missing < 0.0 || missing > 1.0){
         fprintf(stderr, "ERROR: fraction allowable missing genotypes must be between 0 and 1.\n"); 
     }
+    if ((depth_low > 0 && depth_high < 0) || (depth_low < 0 && depth_high > 0)){
+        fprintf(stderr, "ERROR: if one of --depth_low or --depth_high is set (positive value), then both must be set.\n");
+        exit(1);
+    }
+    if (depth_low >= depth_high){
+        fprintf(stderr, "ERROR: lower depth cutoff is higher than upper depth cutoff\n");
+        exit(1);   
+    }
+
     // Initialize random number seed    
     srand(time(NULL));
     
@@ -606,11 +701,11 @@ a negative value is passed, it disables the option.\n");
     map<int, int> sample_mindp;
     map<int, int> sample_maxdp;
 
-    if (percentile > 0){
+    if (depth_low > 0 && depth_high > 0){
         fprintf(stderr, "Determining sample-specific depth cutoffs...\n");
         for (int i = 0; i < samples.size(); ++i){
-            float min = percentile * (float)sample_depth_sum[i];
-            float max = (1.0 - percentile) * (float)sample_depth_sum[i];
+            float min = depth_low * (float)sample_depth_sum[i];
+            float max = depth_high * (float)sample_depth_sum[i];
             float med = 0.5 * (float)sample_depth_sum[i];
             int mindp = -1;
             int maxdp = -1;
@@ -629,6 +724,12 @@ a negative value is passed, it disables the option.\n");
                     break;
                 }
                 cumulative = next;
+            }
+            if (depth_floor > 0 && depth_floor > mindp){
+                mindp = depth_floor;
+            }
+            if (depth_ceil > 0 && depth_ceil < maxdp){
+                maxdp = depth_ceil;
             }
             sample_mindp.insert(make_pair(i, mindp));
             sample_maxdp.insert(make_pair(i, maxdp));
@@ -652,12 +753,22 @@ a negative value is passed, it disables the option.\n");
             }
         }       
     }
-    if (percentile > 0 || hardy_perc > 0){
+    
+    depth_hist.clear();
+    qual_hist.clear();
+    het_count.clear();
+    miss_count.clear();
+    sample_depth_sum.clear();
+    sample_gq_sum.clear();
+
+    if (depth_low > 0 || depth_high > 0 || hardy_perc > 0){
         // Filter input VCF.
         if (out == ""){
             out = "-";
         }
         fprintf(stderr, "Filtering variants...\n");
-        filter_vcf(vcf, out, sample_mindp, sample_maxdp, pop2idx, popnames, hardy_perc, samples.size(), missing);
+        filter_vcf(vcf, out, sample_mindp, sample_maxdp, pop2idx, 
+            popnames, hardy_perc, samples.size(), missing,
+            min_vq, min_gq, output_format);
     } 
 }

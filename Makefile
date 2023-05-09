@@ -12,7 +12,7 @@ endif
 all: bin/bcf2eigenstrat bin/bcf2treemix bin/bam_dummy_rg bin/bam_add_tag bin/eig_upgma bin/eig_dstat bin/filter_pairs bin/sort_huge_bed bin/bam_fq_pairs bin/split_read_file bin/vcf_depth_filter
 MAXHAPS ?= 500
 
-bin/vcf_depth_filter: src/vcf_depth_hist.cpp
+bin/vcf_depth_filter: src/vcf_depth_filter.cpp
 	$(COMP) $(FLAGS) src/vcf_depth_filter.cpp -o bin/vcf_depth_filter $(LDFLAGS)
 
 bin/bcf2eigenstrat: src/bcf2eigenstrat.cpp
