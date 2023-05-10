@@ -219,8 +219,10 @@ float fisher_hardy(int nhom0, int nhet, int nhom1){
 }
 
 
-void filter_vcf(string& filename, string& outfile, map<int, int>& sample_mindp,
-    map<int, int>& sample_maxdp, map<int, set<int> >& pop2idx,
+void filter_vcf(string& filename, string& outfile, 
+    map<int, int32_t>& sample_mindp,
+    map<int, int32_t>& sample_maxdp, 
+    map<int, set<int> >& pop2idx,
     vector<string>& pops,
     float hardy_thresh,
     int num_samples,
@@ -360,14 +362,16 @@ void filter_vcf(string& filename, string& outfile, map<int, int>& sample_mindp,
                 }
                 else{
                     int32_t dp = dps[i];
-                    if (sample_mindp.count(i) > 0 && sample_mindp[i] > dp){
+                    if (sample_mindp.count(i) > 0 && sample_mindp[i] != -1 && 
+                        sample_mindp[i] > dp){
                         // Set to missing.
                         gts[i*ploidy] = bcf_gt_missing;       
                         gts[i*ploidy+1] = bcf_gt_missing;
                         gts_altered = true;
                         gts_alt_depth = true;
                     }
-                    else if (sample_maxdp.count(i) > 0 && sample_maxdp[i] < dp){
+                    else if (sample_maxdp.count(i) > 0 && sample_maxdp[i] != -1 && 
+                        sample_maxdp[i] < dp){
                         // Set to missing.
                         gts[i*ploidy] = bcf_gt_missing;   
                         gts[i*ploidy+1] = bcf_gt_missing;
@@ -431,7 +435,7 @@ void filter_vcf(string& filename, string& outfile, map<int, int>& sample_mindp,
                 }
             } 
             if (((frac_missing == 0 && n_gt_pass == num_samples) || 
-                (float)n_gt_pass / (float)num_samples < frac_missing) && !hardy_fail){
+                1.0 - (float)n_gt_pass / (float)num_samples < frac_missing) && !hardy_fail){
                 if (gts_altered){
                     if (gts_alt_depth){
                         n_depth_fail++;
@@ -555,8 +559,9 @@ int main(int argc, char* argv[]){
     string vcf = "";
     float sample = -1;
     string out;
-    float depth_low = 0.005;
-    float depth_high = 0.99;
+    //float depth_low = 0.005;
+    float depth_low = 0.001;
+    float depth_high = 0.95;
     int depth_floor = 4;
     int depth_ceil = -1;
     int min_vq = 50;
@@ -648,10 +653,6 @@ a negative value is passed, it disables the option.\n");
     if (missing < 0.0 || missing > 1.0){
         fprintf(stderr, "ERROR: fraction allowable missing genotypes must be between 0 and 1.\n"); 
     }
-    if ((depth_low > 0 && depth_high < 0) || (depth_low < 0 && depth_high > 0)){
-        fprintf(stderr, "ERROR: if one of --depth_low or --depth_high is set (positive value), then both must be set.\n");
-        exit(1);
-    }
     if (depth_low >= depth_high){
         fprintf(stderr, "ERROR: lower depth cutoff is higher than upper depth cutoff\n");
         exit(1);   
@@ -698,10 +699,10 @@ a negative value is passed, it disables the option.\n");
         fprintf(stdout, "MISS\t%s\t%d\t%d\n", samples[i].c_str(), miss_count[i].first, miss_count[i].second);
     }   
     
-    map<int, int> sample_mindp;
-    map<int, int> sample_maxdp;
+    map<int, int32_t> sample_mindp;
+    map<int, int32_t> sample_maxdp;
 
-    if (depth_low > 0 && depth_high > 0){
+    if (depth_low > 0 || depth_high > 0 || depth_floor > 0 || depth_ceil > 0){
         fprintf(stderr, "Determining sample-specific depth cutoffs...\n");
         for (int i = 0; i < samples.size(); ++i){
             float min = depth_low * (float)sample_depth_sum[i];
@@ -713,22 +714,22 @@ a negative value is passed, it disables the option.\n");
             int32_t cumulative = 0;
             for (map<int32_t, int>::iterator bin = depth_hist[i].begin(); bin != depth_hist[i].end(); ++bin){
                 int32_t next = cumulative + (bin->first * bin->second);
-                if (mindp == -1 && (float)next >= min){
+                if (depth_low > 0 && mindp == -1 && (float)next >= min){
                     mindp = bin->first;
                 }
                 if (med_dp == -1 && (float)next >= med){
                     med_dp = bin->first;
                 }
-                if (maxdp == -1 && (float)next >= max){
+                if (depth_high > 0 && maxdp == -1 && (float)next >= max){
                     maxdp = bin->first-1;
                     break;
                 }
                 cumulative = next;
             }
-            if (depth_floor > 0 && depth_floor > mindp){
+            if (depth_floor > 0 && (mindp == -1 || depth_floor > mindp)){
                 mindp = depth_floor;
             }
-            if (depth_ceil > 0 && depth_ceil < maxdp){
+            if (depth_ceil > 0 && (maxdp == -1 || depth_ceil < maxdp)){
                 maxdp = depth_ceil;
             }
             sample_mindp.insert(make_pair(i, mindp));
