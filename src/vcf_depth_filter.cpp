@@ -18,6 +18,7 @@
 #include <utility>
 #include <math.h>
 #include <htslib/vcf.h>
+#include <random>
 #include <zlib.h>
 #include <time.h>
 
@@ -163,6 +164,15 @@ void read_vcf(string& filename,
                     if (het_count.count(i) == 0){
                         het_count.insert(make_pair(i, make_pair(0,0)));
                     }
+                    /*
+                    het_count[i].second += 2;
+                    if (bcf_gt_allele(gtptr[0]) != 0){
+                        het_count[i].first++;
+                    }
+                    if (bcf_gt_allele(gtptr[1]) != 0){
+                        het_count[i].first++;
+                    }
+                    */
                     het_count[i].second++;
                     if (bcf_gt_allele(gtptr[0]) != bcf_gt_allele(gtptr[1])){
                         het_count[i].first++;
@@ -174,12 +184,11 @@ void read_vcf(string& filename,
             //free(gts);
         }
         ++nvar;
-        if (nvar % 1000 == 0){
+        if (nvar % 5000 == 0){
             fprintf(stderr, "Processed %d variants\r", nvar);
         }
     }
-    fprintf(stderr, "\n");
-    fprintf(stderr, "Loaded %ld variants\n", nvar);
+    fprintf(stderr, "Processed %ld variants\n", nvar);
     
     free(gqs);
     free(dps);
@@ -229,14 +238,26 @@ void filter_vcf(string& filename, string& outfile,
     float frac_missing,
     int min_vq,
     int min_gq,
-    string& output_format){
+    string& output_format,
+    float sample_prob){
     
     map<int, int> samp2pop;
-    for (map<int, set<int> >::iterator pi = pop2idx.begin(); pi != pop2idx.end(); ++pi){
-        for (set<int>::iterator pi2 = pi->second.begin(); pi2 != pi->second.end(); ++pi2){
-            samp2pop.insert(make_pair(*pi2, pi->first));
+    if (pop2idx.size() == 0){
+        set<int> s;
+        pop2idx.insert(make_pair(0, s));
+        for (int i = 0; i < num_samples; ++i){
+            samp2pop.insert(make_pair(i, 0));
+            pop2idx[0].insert(i);
         }
     }
+    else{
+        for (map<int, set<int> >::iterator pi = pop2idx.begin(); pi != pop2idx.end(); ++pi){
+            for (set<int>::iterator pi2 = pi->second.begin(); pi2 != pi->second.end(); ++pi2){
+                samp2pop.insert(make_pair(*pi2, pi->first));
+            }
+        }
+    }
+
     bcf_hdr_t* bcf_header;
     bcf1_t* bcf_record = bcf_init();
     htsFile* bcf_reader = bcf_open(filename.c_str(), "r");
@@ -257,7 +278,6 @@ void filter_vcf(string& filename, string& outfile,
         fmtstr = "wb";
     }
     htsFile* hts_out = bcf_open(outfile.c_str(), fmtstr.c_str());
-    
     // Write header to output
     //bcf_hdr_t* out_header = bcf_hdr_init("w");
     bcf_hdr_t* out_header = bcf_hdr_dup(bcf_header);
@@ -267,7 +287,6 @@ void filter_vcf(string& filename, string& outfile,
         exit(1);
     }
     long int nvar = 0;
-     
     int32_t* gts = NULL;
     int n_gts = 0;
     int32_t* dps = NULL;
@@ -288,7 +307,6 @@ void filter_vcf(string& filename, string& outfile,
     while(bcf_read(bcf_reader, bcf_header, bcf_record) == 0){
         //string chrom = bcf_hdr_id2name(bcf_header, bcf_record->rid);
         bcf_unpack(bcf_record, BCF_UN_ALL);
-        
         ++nvar;   
         bool pass = true;
         for (int i = 0; i < bcf_record->n_allele; ++i){
@@ -312,7 +330,11 @@ void filter_vcf(string& filename, string& outfile,
             pass = false;
             n_qual_fail++;
         }
-
+        if (pass && sample_prob != 1.0){
+            if ((double)rand() / RAND_MAX > sample_prob){
+                pass = false;
+            }
+        }
         if (pass){
             
             vector<int> pop_hom0;
@@ -397,7 +419,7 @@ void filter_vcf(string& filename, string& outfile,
                 }
                 
                 int32_t* gtptr = gts + i*ploidy;
-                if (bcf_gt_is_missing(gtptr[0])){
+                if (bcf_gt_is_missing(gtptr[0]) || hardy_thresh <= 0){
                     // pass
                 } 
                 else{
@@ -418,7 +440,7 @@ void filter_vcf(string& filename, string& outfile,
             }
             
             int n_test_hardy = 3; 
-            if (n_gt_pass > 0 && pop2idx.size() > 0 && hardy_thresh > 0){
+            if (n_gt_pass > 0 && samp2pop.size() > 0 && hardy_thresh > 0){
                 // test for Hardy-Weinberg equilibrium.
                 for (int p = 0; p < pop_hom0.size(); ++p){
                     if (pop_hom0[p] + pop_het[p] + pop_hom1[p] >= n_test_hardy){
@@ -456,11 +478,11 @@ void filter_vcf(string& filename, string& outfile,
             //free(dps);
             //free(gts);
         }
-        if (nvar % 1000 == 0){
+        if (nvar % 5000 == 0){
             fprintf(stderr, "Processed %d variants\r", nvar);
         }
     }
-    fprintf(stderr, "\n");
+    fprintf(stderr, "Processed %d variants\n", nvar);
     fprintf(stderr, "%d of %d variants removed - not biallelic\n", n_multi_fail, nvar);
     fprintf(stderr, "%d of %d variants removed - indels\n", n_indel_fail, nvar);
     fprintf(stderr, "%d of %d variants removed for failing variant quality filter\n",
@@ -522,11 +544,12 @@ void help(int code){
 a record\n");
     fprintf(stderr, "--out -o To filter input VCF, give name of output VCF to create.\n");
     fprintf(stderr, "--output_format -O Format to write output (v = VCF, z = gzVCF, b = BCF). Default = z\n");
-    fprintf(stderr, "--depth_low -d Cut genotypes with depths lower than this percentile of per-sample distribution.\n");
-    fprintf(stderr, "--depth_high -D Cut genotypes with depths higher than this percentile of per-sample distribution. \
-This should be stricter due to long right tails of coverage. i.e. -d 0.001 -D 0.95 might be reasonable.\n"); 
-    fprintf(stderr, "--depth_floor -f Minimum allowable depth across all samples (default = 4)\n");
-    fprintf(stderr, "--depth_ceil -c Maximum allowable depth across all samples (default = -1 / NA)\n");
+    fprintf(stderr, "--depth_low -d Cut genotypes with depths lower than this percentile of per-sample distribution (default 0.005).\n");
+    fprintf(stderr, "--depth_high -D Cut genotypes with depths higher than this percentile of per-sample distribution (default 0.995). \
+Because of the long right tail of the coverage distribution, this will be taken as this percentile of an exponential distribution \
+with mean = (the peak of the coverage distribution)^-1.\n"); 
+    fprintf(stderr, "--depth_floor -f Minimum allowable depth across all samples (default = 5)\n");
+    fprintf(stderr, "--depth_ceil -c Maximum allowable depth across all samples (default = 1000)\n");
     fprintf(stderr, "--varqual -q Minimum quality of variant to pass filter (default = 50)\n");
     fprintf(stderr, "--gq -Q Minimum quality of genotype to pass filter (default = -1 / NA)\n");
     fprintf(stderr, "--pops -P Provide to calculate within-population Hardy-Weinberg statistics.\n");
@@ -560,10 +583,10 @@ int main(int argc, char* argv[]){
     float sample = -1;
     string out;
     //float depth_low = 0.005;
-    float depth_low = 0.001;
-    float depth_high = 0.95;
-    int depth_floor = 4;
-    int depth_ceil = -1;
+    float depth_low = 0.005;
+    float depth_high = 0.995;
+    int depth_floor = 5;
+    int depth_ceil = 1000;
     int min_vq = 50;
     int min_gq = -1;
     string popsfile = "";
@@ -661,6 +684,25 @@ a negative value is passed, it disables the option.\n");
     // Initialize random number seed    
     srand(time(NULL));
     
+    string outbase;
+    if (out.rfind(".vcf") != string::npos){
+        outbase = out.substr(0, out.rfind(".vcf"));   
+    }
+    else{
+        outbase = out;
+        if (output_format == "v"){
+            out += ".vcf";
+        }
+        else if (output_format == "z"){
+            out += ".vcf.gz";
+        }
+        else if (output_format == "b"){
+            out += ".bcf";
+        }
+    }
+
+    srand(time(NULL)); 
+    
     vector<string> samples;
     map<int, map<int32_t, int> > depth_hist;
     map<int, map<int, int> > qual_hist;
@@ -678,25 +720,40 @@ a negative value is passed, it disables the option.\n");
     }
 
     // Print results
-    vector<int32_t> sample_depth_sum;
-    vector<int32_t> sample_gq_sum;
+    vector<float> sample_depth_sum;
+    vector<float> sample_gq_sum;
+    
+    // prevent overflow
+    float sumscale = 1e-6;
+    
+    string statsname = outbase + ".hist";
+    FILE* statsf = fopen(statsname.c_str(), "w");
+    
+    // Write parameters to stats file 
+    fprintf(statsf, "# vcf %s\n", vcf.c_str());
+    fprintf(statsf, "# sample %f\n", sample);
+    fprintf(statsf, "# depth %f %f\n", depth_low, depth_high);
+    fprintf(statsf, "# depth_floor_ceil %d %d\n", depth_floor, depth_ceil);
+    fprintf(statsf, "# min_gq %d min_vq %d\n", min_gq, min_vq);
+    fprintf(statsf, "# hardy_perc %f pops %s\n", hardy_perc, popsfile.c_str());
+    fprintf(statsf, "# frac_missing %f\n", missing);
 
     for (int i = 0; i < samples.size(); ++i){
-        int32_t ds = 0;
+        float ds = 0;
         for (map<int32_t, int>::iterator bin = depth_hist[i].begin(); bin != depth_hist[i].end(); ++bin){
-            fprintf(stdout, "DP\t%s\t%d\t%d\n", samples[i].c_str(),
+            fprintf(statsf, "DP\t%s\t%d\t%d\n", samples[i].c_str(),
                 bin->first, bin->second);
-            ds += (bin->first * bin->second);
+            ds += (float)(bin->first * bin->second)/sumscale;
         }
         sample_depth_sum.push_back(ds);
-        int32_t gs = 0;
+        float gs = 0;
         for (map<int, int>::iterator bin = qual_hist[i].begin(); bin != qual_hist[i].end(); ++bin){
-            fprintf(stdout, "GQ\t%s\t%d\t%d\n", samples[i].c_str(), bin->first, bin->second);
-            gs += (bin->first * bin->second);
+            fprintf(statsf, "GQ\t%s\t%d\t%d\n", samples[i].c_str(), bin->first, bin->second);
+            gs += (float)(bin->first * bin->second)/sumscale;
         }
         sample_gq_sum.push_back(gs);
-        fprintf(stdout, "HET\t%s\t%d\t%d\n", samples[i].c_str(), het_count[i].first, het_count[i].second);
-        fprintf(stdout, "MISS\t%s\t%d\t%d\n", samples[i].c_str(), miss_count[i].first, miss_count[i].second);
+        fprintf(statsf, "HET\t%s\t%d\t%d\n", samples[i].c_str(), het_count[i].first, het_count[i].second);
+        fprintf(statsf, "MISS\t%s\t%d\t%d\n", samples[i].c_str(), miss_count[i].first, miss_count[i].second);
     }   
     
     map<int, int32_t> sample_mindp;
@@ -704,57 +761,88 @@ a negative value is passed, it disables the option.\n");
 
     if (depth_low > 0 || depth_high > 0 || depth_floor > 0 || depth_ceil > 0){
         fprintf(stderr, "Determining sample-specific depth cutoffs...\n");
+        
         for (int i = 0; i < samples.size(); ++i){
-            float min = depth_low * (float)sample_depth_sum[i];
-            float max = depth_high * (float)sample_depth_sum[i];
-            float med = 0.5 * (float)sample_depth_sum[i];
+            float tot = sample_depth_sum[i];
+            float min = depth_low * tot;
+            float max = depth_high * tot;
+            float med = 0.5 * tot;
             int mindp = -1;
             int maxdp = -1;
             int med_dp = -1;
-            int32_t cumulative = 0;
+            float cumulative = 0;
+            int32_t mode = -1;
+            int modecount = -1;
             for (map<int32_t, int>::iterator bin = depth_hist[i].begin(); bin != depth_hist[i].end(); ++bin){
-                int32_t next = cumulative + (bin->first * bin->second);
-                if (depth_low > 0 && mindp == -1 && (float)next >= min){
+                float next = cumulative + (float)(bin->first * bin->second)/sumscale;
+                if (depth_low > 0 && mindp == -1 && next >= min){
                     mindp = bin->first;
                 }
-                if (med_dp == -1 && (float)next >= med){
+                if (med_dp == -1 && next >= med){
                     med_dp = bin->first;
                 }
-                if (depth_high > 0 && maxdp == -1 && (float)next >= max){
+                if (depth_high > 0 && maxdp == -1 && next >= max){
                     maxdp = bin->first-1;
-                    break;
+                }
+                if (bin->first != 0 && (mode == -1 || bin->second > modecount)){
+                    modecount = bin->second;
+                    mode = bin->first;         
                 }
                 cumulative = next;
             }
+            
+            // New strategy: use empirical lower threshold, but avoid this for
+            // upper because of extremely long right tail that is difficult to 
+            // model and very data set-specific.
+            // Instead, take mode from histogram as 1/mean of exponential distribution
+            // and calculate percentile of this distribution as upper cutoff.
+            float expmean = 1.0 / (float)mode;
+            mindp = (int)round(-log(1.0 - depth_low)/expmean);
+            maxdp = (int)round(-log(1.0 - depth_high)/expmean);
+
             if (depth_floor > 0 && (mindp == -1 || depth_floor > mindp)){
                 mindp = depth_floor;
             }
             if (depth_ceil > 0 && (maxdp == -1 || depth_ceil < maxdp)){
                 maxdp = depth_ceil;
             }
+            if (maxdp <= mindp){
+                maxdp = mindp + 1;
+            }
             sample_mindp.insert(make_pair(i, mindp));
             sample_maxdp.insert(make_pair(i, maxdp));
-            fprintf(stdout, "DP_CUTOFF\t%s\t%d\t%d\n", samples[i].c_str(),
+            fprintf(statsf, "DP_CUTOFF\t%s\t%d\t%d\n", samples[i].c_str(),
                 mindp, maxdp);
 
             // Obtain median GQ too
-            float med2 = 0.5 * (float)sample_gq_sum[i];
+            float med2 = 0.5 * sample_gq_sum[i];
             int med_gq = -1;
-            int32_t cumulative_gq = 0;
+            float cumulative_gq = 0;
+            int32_t mode_gq = -1;
+            int mode_gq_count = -1;
             for (map<int32_t, int>::iterator bin = qual_hist[i].begin(); bin != qual_hist[i].end(); ++bin){
-                int32_t next = cumulative + (bin->first * bin->second);
-                if (med_gq == -1 && (float)next >= med2){
+                float next = cumulative_gq + (float)(bin->first * bin->second)/sumscale;
+                if (med_gq == -1 && next >= med2){
                     med_gq = bin->first;
-                    break;
                 }
+                if (mode_gq == -1 || bin->second > mode_gq_count){
+                    mode_gq_count = bin->second;
+                    mode_gq = bin->first;
+                }
+                cumulative_gq = next;
             }
-            if (med_gq != -1 && med_dp != -1){
-                fprintf(stdout, "MED_DP_GQ\t%s\t%d\t%d\n", samples[i].c_str(),
+            if (med_gq != -1 || med_dp != -1){
+                fprintf(statsf, "MED_DP_GQ\t%s\t%d\t%d\n", samples[i].c_str(),
                     med_dp, med_gq);  
+            }
+            if (mode != -1 || mode_gq != -1){
+                fprintf(statsf, "MODE_DP_GQ\t%s\t%d\t%d\n", samples[i].c_str(),
+                    mode, mode_gq);
             }
         }       
     }
-    
+    fclose(statsf);
+
     depth_hist.clear();
     qual_hist.clear();
     het_count.clear();
@@ -770,6 +858,6 @@ a negative value is passed, it disables the option.\n");
         fprintf(stderr, "Filtering variants...\n");
         filter_vcf(vcf, out, sample_mindp, sample_maxdp, pop2idx, 
             popnames, hardy_perc, samples.size(), missing,
-            min_vq, min_gq, output_format);
+            min_vq, min_gq, output_format, sample);
     } 
 }

@@ -9,8 +9,14 @@ ifeq ($(UNAME_S),Darwin)
 	LDFLAGS += -L$(CELLAR)/lib/ -largp
 endif
 
-all: bin/bcf2eigenstrat bin/bcf2treemix bin/bam_dummy_rg bin/bam_add_tag bin/eig_upgma bin/eig_dstat bin/filter_pairs bin/sort_huge_bed bin/bam_fq_pairs bin/split_read_file bin/vcf_depth_filter
+all: bin/bcf2eigenstrat bin/bcf2treemix bin/bam_dummy_rg bin/bam_add_tag bin/eig_upgma bin/eig_dstat bin/filter_pairs bin/sort_huge_bed bin/bam_fq_pairs bin/split_read_file bin/vcf_depth_filter bin/fagrep bin/count_gc_fa
 MAXHAPS ?= 500
+
+bin/count_gc_fa: src/count_gc_fa.cpp
+	$(COMP) $(FLAGS) src/count_gc_fa.cpp -o bin/count_gc_fa $(LDFLAGS) -lhts
+
+bin/fagrep: src/fagrep.cpp
+	$(COMP) $(FLAGS) src/fagrep.cpp -o bin/fagrep $(LDFLAGS)
 
 bin/vcf_depth_filter: src/vcf_depth_filter.cpp
 	$(COMP) $(FLAGS) src/vcf_depth_filter.cpp -o bin/vcf_depth_filter $(LDFLAGS)

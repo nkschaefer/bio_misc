@@ -3,7 +3,7 @@
 args <- commandArgs(trailingOnly=TRUE)
 
 if (length(args) < 1){
-    cat("Please provide stats file (stdout from vcf_depth_filter), and optionally, the \
+    cat("Please provide stats file (from vcf_depth_filter), and optionally, the \
 pops file given to vcf_depth_filter.\n")
     q()
 }
@@ -28,11 +28,13 @@ maxes <- aggregate(stats[which(stats$type=="DP"),]$num2, by=list(id=stats[which(
 colnames(maxes)[2] <- "maxy"
 maxes <- merge(maxes, stats[which(stats$type=="MED_DP_GQ"),], by="id")
 
+width <- 7
+height <- 7
 plt <- ""
 if (pop){
-    maxes <- merge(maxes, popsf, by="id")
+    width <- 9
     plt <- ggplot(stats[which(stats$type=="DP"),]) + 
-        geom_line(aes(x=num1, y=num2, colour=pop, group=id)) + 
+        geom_line(aes(x=num1, y=num2, colour=factor(pop), group=factor(id))) + 
         theme_bw() + 
         scale_x_log10("Coverage depth") + 
         scale_y_continuous("Frequency") + 
@@ -48,33 +50,41 @@ if (pop){
         scale_x_log10("Coverage depth") + 
         scale_y_continuous("Frequency") + 
         annotation_logticks(side="b") + 
-        geom_vline(data=stats[which(stats$type=="DP_CUTOFF"),], aes(xintercept=num1, colour=id), 
+        geom_vline(data=stats[which(stats$type=="DP_CUTOFF"),], aes(xintercept=num1, colour=factor(id)), 
             lty="dotted", show.legend=FALSE) + 
-        geom_vline(data=stats[which(stats$type=="DP_CUTOFF"),], aes(xintercept=num2, colour=id), 
+        geom_vline(data=stats[which(stats$type=="DP_CUTOFF"),], aes(xintercept=num2, colour=factor(id)), 
             lty="dotted", show.legend=FALSE) + 
-        geom_text(data=maxes, aes(label=id, x=num1, y=maxy, colour=id), show.legend=FALSE)
+        geom_text(data=maxes, aes(label=id, x=num1, y=maxy, colour=factor(id)), show.legend=FALSE)
 }
 
 outfname <- paste(statsfbase, '.cov.pdf', sep='')
-ggsave(outfname, plt)
+ggsave(outfname, plt, width=width, height=height)
 
 # Make second plot for heterozygosity & missing data
+if (pop){
+    # Get stuff sorted by population to make bar plot look better
+    cols <- unique(stats[,which(colnames(stats) %in% c("id", "pop"))])
+    cols <- cols[order(cols$id),]
+    cols <- cols[order(cols$pop),]
+    ord <- cols$id
+    stats$id <- factor(stats$id, labels=ord, levels=ord)
+}
 
 plt <- ggplot(stats[which(stats$type=="HET" | stats$type=="MISS"),])
 if (pop){
-    plt <- plt + geom_bar(aes(x=id, y=num1/num2, fill=pop), stat='identity') + 
+
+    plt <- plt + geom_bar(aes(x=id, y=num1/num2, fill=factor(pop)), stat='identity') + 
     scale_fill_discrete("Population")
 } else{
-    plt <- plt + geom_bar(aes(x=id, y=num1/num2, fill=id), stat='identity', show.legend=FALSE)
+    plt <- plt + geom_bar(aes(x=id, y=num1/num2, fill=factor(id)), stat='identity', show.legend=FALSE)
 }
 
 plt <- plt + theme_bw() + 
     facet_grid(type~., scales="free_y") + 
     scale_x_discrete("Sample") + 
     scale_y_continuous("Rate") + 
-    scale_fill_discrete("Population") + 
     theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1))
 
 outfname <- paste(statsfbase, '.hetmiss.pdf', sep='')
-ggsave(outfname, plt)
+ggsave(outfname, plt, width=width, height=height)
 
