@@ -46,7 +46,7 @@ void write_seqs(vector<kseq_t*>& seqs_in,
     vector<gzFile>& fp_out){
     
     for (int i = 0 ; i < seqs_in.size(); ++i){
-        if (seqs_in[i]->qual.s > 0){
+        if (seqs_in[i]->qual.l > 0){
             // FASTQ
             gzwrite(fp_out[i], "@", 1);
             gzwrite(fp_out[i], seqs_in[i]->name.s, seqs_in[i]->name.l);
